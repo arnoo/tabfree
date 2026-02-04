@@ -1,0 +1,7 @@
+{
+  "name": "fr.btmx.seticon",
+  "description": "Native Host for setting X11 icons from Firefox",
+  "path": "/home/arno/dev/tabfree/host.py",
+  "type": "stdio",
+  "allowed_extensions": [ "tabfree@arnoo.github.com" ]
+}
