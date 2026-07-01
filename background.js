@@ -3,12 +3,16 @@
   Modified in 2026 for Icon Sync by Arnaud Bétrémieux arnaud@btmx.fr
 */
 
+const windowizedTabs = new Set();
+const windowizedWindows = new Map();
+
 function windowize(tab) {
     if (tab.index == 0) return;
 
     var createData = {
         tabId: tab.id,
-        incognito: tab.incognito
+        incognito: tab.incognito,
+        focused: false
     };
 
     var srcwin = browser.windows.get(tab.windowId);
@@ -17,13 +21,57 @@ function windowize(tab) {
         if (result.state == "fullscreen") {
             createData.state = "fullscreen";
         }
-        browser.windows.create(createData);
+        browser.windows.create(createData).then((win) => {
+            windowizedTabs.add(tab.id);
+            windowizedWindows.set(tab.id, win.id);
+            setTimeout(() => {
+                windowizedTabs.delete(tab.id);
+                windowizedWindows.delete(tab.id);
+            }, 5000);
+        });
     }, function(error) {
-        browser.windows.create(createData);
+        browser.windows.create(createData).then((win) => {
+            windowizedTabs.add(tab.id);
+            windowizedWindows.set(tab.id, win.id);
+            setTimeout(() => {
+                windowizedTabs.delete(tab.id);
+                windowizedWindows.delete(tab.id);
+            }, 5000);
+        });
     });
 }
 
 browser.tabs.onCreated.addListener(windowize);
+
+browser.webNavigation.onCommitted.addListener((details) => {
+    if (details.frameId !== 0) return;
+    if (windowizedTabs.has(details.tabId)) {
+        const winId = windowizedWindows.get(details.tabId);
+        windowizedTabs.delete(details.tabId);
+        windowizedWindows.delete(details.tabId);
+        if (winId !== undefined) {
+            browser.windows.update(winId, { focused: true }).catch((e) => {
+                console.error("Tabfree: failed to focus window", e);
+            });
+        }
+    }
+});
+
+browser.webNavigation.onErrorOccurred.addListener((details) => {
+    if (details.frameId !== 0) return;
+    if (!windowizedTabs.has(details.tabId)) return;
+    if (details.error.includes("2147500036") || details.error.includes("ABORT")) {
+        const winId = windowizedWindows.get(details.tabId);
+        windowizedTabs.delete(details.tabId);
+        windowizedWindows.delete(details.tabId);
+        if (winId !== undefined) {
+            browser.windows.remove(winId).catch((e) => {
+                console.error("Tabfree: failed to close leftover window", e);
+            });
+            console.log("Tabfree: closed leftover window", winId, "for tab", details.tabId);
+        }
+    }
+});
 
 var windowIds = {};
 var gettingId = {};
@@ -69,21 +117,21 @@ const allowedSchemes = new Set([
     "http", "https", "ftp", "file", "about", "moz-extension", "view-source", "ws", "wss"
 ]);
 
-browser.webRequest.onBeforeRequest.addListener(
+browser.webNavigation.onBeforeNavigate.addListener(
     (details) => {
+        if (details.frameId !== 0) return;
         try {
             const url = new URL(details.url);
             const scheme = url.protocol.replace(':', '');
             if (!allowedSchemes.has(scheme)) {
                 setTimeout(() => {
-                    browser.tabs.remove(details.tabId).catch(() => {
-                        // Ignore error if tab is already closed
+                    browser.tabs.remove(details.tabId).catch((e) => {
+                        console.error("Tabfree: failed to close leftover tab", e);
                     });
                 }, 1000);
             }
         } catch (e) {
             console.error("Tabfree: URL parsing failed", e);
         }
-    },
-    { urls: ["<all_urls>"], types: ["main_frame"] }
+    }
 );

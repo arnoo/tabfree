@@ -2,7 +2,7 @@
     "manifest_version": 2,
     "name": "Tabfree",
     "description": "Converts tabs to windows and syncs X11 window icons.",
-    "version": "0.4",
+    "version": "0.5",
     "developer": {
         "name": "Arnaud Bétrémieux",
         "url": "https://github.com/arnoo/tabfree"
@@ -21,7 +21,6 @@
     "permissions": [
         "nativeMessaging",
         "tabs",
-        "webRequest",
-        "<all_urls>"
+        "webNavigation"
     ]
 }
