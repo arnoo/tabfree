@@ -27,47 +27,40 @@ browser.tabs.onCreated.addListener(windowize);
 
 var windowIds = {};
 var gettingId = {};
-var deferedIconUrls = {};
 browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  console.log("ON UPDATED");
-  const twId = tab.windowId+' '+tabId;
-  if (!windowIds[twId]) {
-    if (!gettingId[twId]) {
-      gettingId[twId] = true;
-    } else {
+  const wId = tab.windowId;
+  if (!windowIds[wId]) {
+    if (!gettingId[wId]) {
+      gettingId[wId] = (async () => {
+        const win = await browser.windows.get(tab.windowId);
+        const windowUUID = crypto.randomUUID();
+        await browser.windows.update(win.id, { titlePreface: `[TABFREE_UUID:${windowUUID}]` });
+        try {
+          const response = await browser.runtime.sendNativeMessage("fr.btmx.seticon", { windowUUID });
+          if (response.windowId) {
+            windowIds[wId] = response.windowId;
+          } else {
+            delete windowIds[wId];
+          }
+        } catch (e) {
+          delete windowIds[wId];
+          throw e;
+        } finally {
+          await browser.windows.update(win.id, { titlePreface: '' });
+          delete gettingId[wId];
+        }
+      })();
+    }
+    try {
+      await gettingId[wId];
+    } catch (e) {
       return;
     }
-    console.log("WID");
-    const win = await browser.windows.get(tab.windowId);
-    console.log("WINDOW", win);
-    const windowUUID = crypto.randomUUID();
-    await browser.windows.update(win.id, { titlePreface: `[TABFREE_UUID:${windowUUID}]` });
-    console.log("BID");
-    try {
-     console.log("MSG");
-     const response = await browser.runtime.sendNativeMessage("fr.btmx.seticon", { windowUUID });
-     windowIds[twId] = response.windowId;
-     console.log("WID: ", response.windowId);
-    } finally {
-      await browser.windows.update(win.id, { titlePreface: '' });
-      delete(gettingId[twId]);
-      if (deferedIconUrls[twId]) {
-        browser.runtime.sendNativeMessage("fr.btmx.seticon", {
-          iconUrl: deferedIconUrls[twId],
-          windowId: windowIds[twId]
-        });
-        delete(deferedIconUrls[twId]);
-      }
-    }
   }
-  if (changeInfo.favIconUrl) {
-    if (gettingId[twId]) {
-      deferedIconUrls[twId] = changeInfo.favIconUrl;
-      return
-    }
+  if (changeInfo.favIconUrl && windowIds[wId]) {
     browser.runtime.sendNativeMessage("fr.btmx.seticon", {
       iconUrl: changeInfo.favIconUrl,
-      windowId: windowIds[twId]
+      windowId: windowIds[wId]
     });
   }
 });
@@ -81,7 +74,6 @@ browser.webRequest.onBeforeRequest.addListener(
         try {
             const url = new URL(details.url);
             const scheme = url.protocol.replace(':', '');
-
             if (!allowedSchemes.has(scheme)) {
                 setTimeout(() => {
                     browser.tabs.remove(details.tabId).catch(() => {

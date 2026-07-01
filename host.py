@@ -8,6 +8,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 
 from functools import lru_cache
@@ -48,17 +49,60 @@ def convert(data, source_format):
     else:
         raise ValueError("Invalid source format")
 
-def send_window_xid(window_uuid):
-    cmd_search = ["xdotool", "search", "--name", f"\\[TABFREE_UUID:{window_uuid}\\]"]
+def _is_toplevel(window_id):
     try:
-      window_ids = subprocess.check_output(cmd_search).decode().strip().split('\n')
-      if len(window_ids)==0:
-          send_message({"status": "no_window_found"})
-      send_message({"windowId": window_ids[0]})
-      logging.debug(f"Sent window ID")
-    except subprocess.CalledProcessError as e:
-        send_message({"status": "xdotool_error"})
-        logging.error(f"xdotool error: {e}")
+        out = subprocess.check_output(
+            ["xprop", "-id", window_id, "_NET_WM_WINDOW_TYPE"],
+            stderr=subprocess.DEVNULL,
+        ).decode()
+        return "_NET_WM_WINDOW_TYPE_NORMAL" in out
+    except subprocess.CalledProcessError:
+        return False
+
+
+def _window_title(window_id):
+    try:
+        out = subprocess.check_output(
+            ["xprop", "-id", window_id, "_NET_WM_NAME"],
+            stderr=subprocess.DEVNULL,
+        ).decode()
+        m = re.search(r'=\s"(.*)"', out)
+        return m.group(1) if m else out.strip()
+    except subprocess.CalledProcessError:
+        return "<unknown>"
+
+
+def send_window_xid(window_uuid):
+    pattern = f"\\[TABFREE_UUID:{window_uuid}\\]"
+    cmd_search = ["xdotool", "search", "--onlyvisible", "--name", pattern]
+    attempts = 10
+    delay = 0.05
+    last_toplevels = []
+    for _ in range(attempts):
+        try:
+            raw = subprocess.check_output(cmd_search, stderr=subprocess.DEVNULL).decode().strip()
+        except subprocess.CalledProcessError:
+            raw = ""
+        candidates = [w for w in raw.split('\n') if w]
+        toplevels = [w for w in candidates if _is_toplevel(w)]
+        last_toplevels = toplevels
+        if len(toplevels) == 1:
+            wid = toplevels[0]
+            logging.debug(f"Resolved window id {wid} ({_window_title(wid)})")
+            send_message({"windowId": wid})
+            return
+        if len(toplevels) > 1:
+            logging.debug(f"Ambiguous: {toplevels} ({[_window_title(w) for w in toplevels]})")
+        time.sleep(delay)
+    if not last_toplevels:
+        send_message({"status": "no_window_found"})
+        logging.error(f"No window found for uuid {window_uuid}")
+        return
+    send_message({"status": "ambiguous_window", "count": len(last_toplevels)})
+    logging.error(
+        f"Ambiguous window for uuid {window_uuid}: {last_toplevels} "
+        f"({[_window_title(w) for w in last_toplevels]})"
+    )
 
 @lru_cache(maxsize=200)
 def get_icon(icon_url):
