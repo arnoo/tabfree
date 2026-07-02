@@ -5,9 +5,13 @@
 
 const windowizedTabs = new Set();
 const windowizedWindows = new Map();
+const pendingNavs = new Set();
+const windowizingTabs = new Set();
+const closeWindowOnCreate = new Map();
 
 function windowize(tab) {
     if (tab.index == 0) return;
+    windowizingTabs.add(tab.id);
 
     var createData = {
         tabId: tab.id,
@@ -22,21 +26,53 @@ function windowize(tab) {
             createData.state = "fullscreen";
         }
         browser.windows.create(createData).then((win) => {
+            windowizingTabs.delete(tab.id);
+            if (closeWindowOnCreate.has(tab.id)) {
+                closeWindowOnCreate.delete(tab.id);
+                browser.windows.remove(win.id).catch((e) => {
+                    console.error("Tabfree: failed to close leftover window", e);
+                });
+                console.log("Tabfree: closed leftover window", win.id, "for tab", tab.id);
+                return;
+            }
             windowizedTabs.add(tab.id);
             windowizedWindows.set(tab.id, win.id);
             setTimeout(() => {
                 windowizedTabs.delete(tab.id);
                 windowizedWindows.delete(tab.id);
             }, 5000);
+            browser.tabs.get(tab.id).then((t) => {
+                if (t.url !== "about:blank") {
+                    browser.windows.update(win.id, { focused: true }).catch((e) => {
+                        console.error("Tabfree: failed to focus window", e);
+                    });
+                }
+            });
         });
     }, function(error) {
         browser.windows.create(createData).then((win) => {
+            windowizingTabs.delete(tab.id);
+            if (closeWindowOnCreate.has(tab.id)) {
+                closeWindowOnCreate.delete(tab.id);
+                browser.windows.remove(win.id).catch((e) => {
+                    console.error("Tabfree: failed to close leftover window", e);
+                });
+                console.log("Tabfree: closed leftover window", win.id, "for tab", tab.id);
+                return;
+            }
             windowizedTabs.add(tab.id);
             windowizedWindows.set(tab.id, win.id);
             setTimeout(() => {
                 windowizedTabs.delete(tab.id);
                 windowizedWindows.delete(tab.id);
             }, 5000);
+            browser.tabs.get(tab.id).then((t) => {
+                if (t.url !== "about:blank") {
+                    browser.windows.update(win.id, { focused: true }).catch((e) => {
+                        console.error("Tabfree: failed to focus window", e);
+                    });
+                }
+            });
         });
     });
 }
@@ -45,6 +81,8 @@ browser.tabs.onCreated.addListener(windowize);
 
 browser.webNavigation.onCommitted.addListener((details) => {
     if (details.frameId !== 0) return;
+    pendingNavs.delete(details.tabId);
+    if (closeWindowOnCreate.has(details.tabId)) return;
     if (windowizedTabs.has(details.tabId)) {
         const winId = windowizedWindows.get(details.tabId);
         windowizedTabs.delete(details.tabId);
@@ -59,16 +97,30 @@ browser.webNavigation.onCommitted.addListener((details) => {
 
 browser.webNavigation.onErrorOccurred.addListener((details) => {
     if (details.frameId !== 0) return;
-    if (!windowizedTabs.has(details.tabId)) return;
-    if (details.error.includes("2147500036") || details.error.includes("ABORT")) {
-        const winId = windowizedWindows.get(details.tabId);
-        windowizedTabs.delete(details.tabId);
-        windowizedWindows.delete(details.tabId);
-        if (winId !== undefined) {
-            browser.windows.remove(winId).catch((e) => {
-                console.error("Tabfree: failed to close leftover window", e);
+    const isWindowized = windowizedTabs.has(details.tabId);
+    const isWindowizing = windowizingTabs.has(details.tabId);
+    const isPending = pendingNavs.has(details.tabId);
+    pendingNavs.delete(details.tabId);
+    if (!isWindowized && !isWindowizing && !isPending) return;
+    if (details.error.includes("2147500036") || details.error.includes("2152398865")) {
+        if (isWindowized) {
+            const winId = windowizedWindows.get(details.tabId);
+            windowizedTabs.delete(details.tabId);
+            windowizedWindows.delete(details.tabId);
+            if (winId !== undefined) {
+                browser.windows.remove(winId).catch((e) => {
+                    console.error("Tabfree: failed to close leftover window", e);
+                });
+                console.log("Tabfree: closed leftover window", winId, "for tab", details.tabId);
+            }
+        } else if (isWindowizing) {
+            closeWindowOnCreate.set(details.tabId, true);
+            setTimeout(() => { closeWindowOnCreate.delete(details.tabId); }, 5000);
+        } else {
+            browser.tabs.remove(details.tabId).catch((e) => {
+                console.error("Tabfree: failed to close leftover tab", e);
             });
-            console.log("Tabfree: closed leftover window", winId, "for tab", details.tabId);
+            console.log("Tabfree: closed leftover tab", details.tabId);
         }
     }
 });
@@ -120,6 +172,7 @@ const allowedSchemes = new Set([
 browser.webNavigation.onBeforeNavigate.addListener(
     (details) => {
         if (details.frameId !== 0) return;
+        pendingNavs.add(details.tabId);
         try {
             const url = new URL(details.url);
             const scheme = url.protocol.replace(':', '');
