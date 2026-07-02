@@ -93,6 +93,7 @@ browser.webNavigation.onCommitted.addListener((details) => {
             });
         }
     }
+    resetWindowIcon(details.tabId);
 });
 
 browser.webNavigation.onErrorOccurred.addListener((details) => {
@@ -101,7 +102,10 @@ browser.webNavigation.onErrorOccurred.addListener((details) => {
     const isWindowizing = windowizingTabs.has(details.tabId);
     const isPending = pendingNavs.has(details.tabId);
     pendingNavs.delete(details.tabId);
-    if (!isWindowized && !isWindowizing && !isPending) return;
+    if (!isWindowized && !isWindowizing && !isPending) {
+        resetWindowIcon(details.tabId);
+        return;
+    }
     if (details.error.includes("2147500036") || details.error.includes("2152398865")) {
         if (isWindowized) {
             const winId = windowizedWindows.get(details.tabId);
@@ -127,6 +131,22 @@ browser.webNavigation.onErrorOccurred.addListener((details) => {
 
 var windowIds = {};
 var gettingId = {};
+
+async function resetWindowIcon(tabId) {
+  try {
+    const tab = await browser.tabs.get(tabId);
+    const xId = windowIds[tab.windowId];
+    if (xId) {
+      browser.runtime.sendNativeMessage("fr.btmx.seticon", {
+        reset: true,
+        windowId: xId
+      });
+    }
+  } catch (e) {
+    console.error("Tabfree: failed to reset window icon", e);
+  }
+}
+
 browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const wId = tab.windowId;
   if (!windowIds[wId]) {

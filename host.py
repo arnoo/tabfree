@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import cairosvg
+import io
 import json
 import logging
 import os
@@ -40,7 +41,7 @@ def convert(data, source_format):
     if source_format == 'png': 
         return data
     elif source_format == 'ico': 
-        with Image.open(data) as img:
+        with Image.open(io.BytesIO(data)) as img:
             with io.BytesIO() as output_buffer:
                 img.save(output_buffer, format="PNG")
                 return output_buffer.getvalue()
@@ -130,6 +131,9 @@ def get_icon(icon_url):
         return convert(response.read(), extension)
 
 
+DEFAULT_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icons', 'firefox-default.png')
+
+
 def set_window_icon(window_id, icon_url):
     logging.debug(f"GOT ICON URL")
     with tempfile.NamedTemporaryFile(delete=False, suffix='png') as icon_file:
@@ -142,6 +146,15 @@ def set_window_icon(window_id, icon_url):
         logging.error(f"xseticon error: {e}")
     if os.path.exists(icon_file.name):
         os.unlink(icon_file.name)
+
+
+def reset_window_icon(window_id):
+    try:
+        subprocess.run(["xseticon", "-id", window_id, DEFAULT_ICON])
+        send_message({"status": "success"})
+    except subprocess.CalledProcessError as e:
+        send_message({"status": "xseticon_error"})
+        logging.error(f"xseticon error: {e}")
 
 
 def main_loop():
@@ -157,6 +170,9 @@ def main_loop():
             window_id = message.get('windowId')
             if icon_url and window_id:
                 set_window_icon(window_id, icon_url)
+                continue
+            if message.get('reset') and window_id:
+                reset_window_icon(window_id)
                 continue
             logging.error(f"Invalid Message: {message}")
         except Exception as e:

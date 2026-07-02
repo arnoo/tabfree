@@ -2,7 +2,7 @@ EXTENSION_NAME := tabfree
 XPI_FILE := $(EXTENSION_NAME).xpi
 RELEASE_TAR := $(EXTENSION_NAME)-complete.tar
 EXT_FILES := manifest.json background.js
-HOST_FILES := host.py fr.btmx.seticon.json install_host.sh
+HOST_FILES := host.py fr.btmx.seticon.json install_host.sh icons/firefox-default.png
 
 .PHONY: all xpi dist clean
 
