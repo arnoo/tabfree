@@ -37,18 +37,30 @@ def send_message(message_content):
     sys.stdout.buffer.write(encoded_content)
     sys.stdout.buffer.flush()
 
+MAX_ICON_SIZE = 128
+
 def convert(data, source_format):
-    if source_format == 'png': 
-        return data
-    elif source_format == 'ico': 
+    if source_format == 'png':
+        img_data = data
+    elif source_format == 'ico':
         with Image.open(io.BytesIO(data)) as img:
             with io.BytesIO() as output_buffer:
                 img.save(output_buffer, format="PNG")
-                return output_buffer.getvalue()
-    elif source_format == 'svg': 
-        return cairosvg.svg2png(bytestring=data)
+                img_data = output_buffer.getvalue()
+    elif source_format == 'svg':
+        img_data = cairosvg.svg2png(bytestring=data)
     else:
         raise ValueError("Invalid source format")
+    with Image.open(io.BytesIO(img_data)) as img:
+        w, h = img.size
+        if w > MAX_ICON_SIZE or h > MAX_ICON_SIZE:
+            scale = min(MAX_ICON_SIZE / w, MAX_ICON_SIZE / h)
+            new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+            img = img.convert('RGBA').resize(new_size, Image.LANCZOS)
+            with io.BytesIO() as output_buffer:
+                img.save(output_buffer, format="PNG")
+                return output_buffer.getvalue()
+        return img_data
 
 def _is_toplevel(window_id):
     try:
@@ -136,11 +148,19 @@ DEFAULT_ICON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icons',
 
 def set_window_icon(window_id, icon_url):
     logging.debug(f"GOT ICON URL")
-    with tempfile.NamedTemporaryFile(delete=False, suffix='png') as icon_file:
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as icon_file:
         icon_file.write(get_icon(icon_url))
     try:
-        subprocess.run(["xseticon", "-id", window_id, icon_file.name])
-        send_message({"status": "success"})
+        result = subprocess.run(
+            ["xseticon", "-id", window_id, icon_file.name],
+            capture_output=True, check=False,
+        )
+        if result.returncode == 0:
+            send_message({"status": "success"})
+        else:
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            send_message({"status": "xseticon_error", "rc": result.returncode, "stderr": stderr})
+            logging.error(f"xseticon error rc={result.returncode}: {stderr}")
     except subprocess.CalledProcessError as e:
         send_message({"status": "xseticon_error"})
         logging.error(f"xseticon error: {e}")
@@ -150,8 +170,16 @@ def set_window_icon(window_id, icon_url):
 
 def reset_window_icon(window_id):
     try:
-        subprocess.run(["xseticon", "-id", window_id, DEFAULT_ICON])
-        send_message({"status": "success"})
+        result = subprocess.run(
+            ["xseticon", "-id", window_id, DEFAULT_ICON],
+            capture_output=True, check=False,
+        )
+        if result.returncode == 0:
+            send_message({"status": "success"})
+        else:
+            stderr = result.stderr.decode("utf-8", errors="replace").strip()
+            send_message({"status": "xseticon_error", "rc": result.returncode, "stderr": stderr})
+            logging.error(f"xseticon error rc={result.returncode}: {stderr}")
     except subprocess.CalledProcessError as e:
         send_message({"status": "xseticon_error"})
         logging.error(f"xseticon error: {e}")
